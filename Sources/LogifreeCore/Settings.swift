@@ -107,6 +107,12 @@ public struct Settings: Codable, Equatable {
     public var wheelMode: WheelMode = .unchanged
     /// SmartShift threshold, 1 (shifts to free spin easily) … 100 (barely).
     public var smartShiftSensitivity = 50
+    /// Mouse sensor DPI; nil leaves the mouse's own.
+    public var pointerDPI: Int?
+    /// Turn wheel clicks into short animated pixel scrolls, like a trackpad.
+    public var smoothScrolling = false
+    /// Multiplies the distance of smooth scrolling (1 = about what macOS scrolls natively).
+    public var scrollSpeed = 1.0
 
     public init() {}
 
@@ -147,6 +153,9 @@ public struct Settings: Codable, Equatable {
         wheelMode = try container.decodeIfPresent(WheelMode.self, forKey: .wheelMode) ?? defaults.wheelMode
         smartShiftSensitivity = try container.decodeIfPresent(Int.self, forKey: .smartShiftSensitivity)
             ?? defaults.smartShiftSensitivity
+        pointerDPI = try container.decodeIfPresent(Int.self, forKey: .pointerDPI)
+        smoothScrolling = try container.decodeIfPresent(Bool.self, forKey: .smoothScrolling) ?? defaults.smoothScrolling
+        scrollSpeed = try container.decodeIfPresent(Double.self, forKey: .scrollSpeed) ?? defaults.scrollSpeed
     }
 
     public static let directory = FileManager.default.homeDirectoryForCurrentUser
@@ -199,9 +208,17 @@ public struct AgentStatus: Codable {
         public var canForget: Bool
         /// The channel it announced switching to; it's about to leave this Mac.
         public var switchedTo: UInt8?
+        /// Mice: sensor DPI now, and the range it accepts.
+        public var dpi: Int?
+        public var dpiMin: Int?
+        public var dpiMax: Int?
 
         public init(name: String, isMouse: Bool, route: String, problem: String?,
-                    slots: [HostSlot], canForget: Bool, switchedTo: UInt8?) {
+                    slots: [HostSlot], canForget: Bool, switchedTo: UInt8?,
+                    dpi: Int? = nil, dpiMin: Int? = nil, dpiMax: Int? = nil) {
+            self.dpi = dpi
+            self.dpiMin = dpiMin
+            self.dpiMax = dpiMax
             self.name = name
             self.isMouse = isMouse
             self.route = route

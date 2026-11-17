@@ -140,3 +140,37 @@ final class AppProfileTests: XCTestCase {
         XCTAssertNil(MouseButton(eventButtonNumber: 2))
     }
 }
+
+final class DPITests: XCTestCase {
+    // MX Master 3: 200–4000 in steps of 50 → 00C8 E032 0FA0 0000.
+    private let mxMaster3 = DPIList(bytes: [0x00, 0xC8, 0xE0, 0x32, 0x0F, 0xA0, 0x00, 0x00, 0x00, 0x00])
+
+    func testParsesSteppedRange() {
+        XCTAssertEqual(mxMaster3.minimum, 200)
+        XCTAssertEqual(mxMaster3.maximum, 4000)
+        XCTAssertEqual(mxMaster3.ranges.first?.step, 50)
+    }
+
+    func testSnapsToAcceptedValues() {
+        XCTAssertEqual(mxMaster3.nearest(to: 1112), 1100)
+        XCTAssertEqual(mxMaster3.nearest(to: 1130), 1150)
+        XCTAssertEqual(mxMaster3.nearest(to: 50), 200)
+        XCTAssertEqual(mxMaster3.nearest(to: 9000), 4000)
+    }
+
+    func testParsesPlainList() {
+        let list = DPIList(bytes: [0x01, 0x90, 0x03, 0x20, 0x06, 0x40, 0x00, 0x00])
+        XCTAssertEqual(list.values, [400, 800, 1600])
+        XCTAssertEqual(list.nearest(to: 1000), 800)
+    }
+
+    func testNewScrollAndPointerSettingsRoundTrip() throws {
+        var settings = Settings()
+        settings.pointerDPI = 1100
+        settings.smoothScrolling = true
+        settings.scrollSpeed = 0.6
+        let decoded = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded, settings)
+        XCTAssertNil(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).pointerDPI)
+    }
+}

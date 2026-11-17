@@ -21,6 +21,9 @@ final class Daemon {
         var slots: [HostSlot] = []
         var canForget = false
         var switchedTo: UInt8?
+        var dpi: Int?
+        var defaultDPI: Int?
+        var dpiList: DPIList?
         init(_ device: Device) { self.device = device }
     }
 
@@ -45,7 +48,7 @@ final class Daemon {
         if !AXIsProcessTrustedWithOptions(options) {
             Log.info("no Accessibility permission yet: gesture actions can't send shortcuts until it's granted")
         }
-        scrollTap.minimumLines = settings.minimumLinesPerClick
+        scrollTap.apply(settings)
         buttonTap.settings = settings
         applyKeyRemaps()
         Settings.observeReload { [unowned self] in reload() }
@@ -68,11 +71,12 @@ final class Daemon {
     private func reload() {
         let old = settings
         settings = Settings.load()
-        scrollTap.minimumLines = settings.minimumLinesPerClick // also retries the tap once Accessibility is granted
+        scrollTap.apply(settings) // also retries the tap once Accessibility is granted
         buttonTap.settings = settings
         if settings.keyRemaps != old.keyRemaps { applyKeyRemaps() }
         if settings.invertWheel != old.invertWheel || settings.invertThumbwheel != old.invertThumbwheel
             || settings.wheelMode != old.wheelMode || settings.smartShiftSensitivity != old.smartShiftSensitivity
+            || settings.pointerDPI != old.pointerDPI
             || divertsGesture(settings) != divertsGesture(old) {
             Log.info("settings changed: reconfiguring devices")
             tracked.forEach { scheduleConfigure($0, after: 0) }
@@ -97,7 +101,13 @@ final class Daemon {
         settings.buttons = [:]
         settings.wheelMode = .unchanged
         settings.keyRemaps = []
-        scrollTap.minimumLines = 1
+        settings.smoothScrolling = false
+        settings.minimumLinesPerClick = 1
+        for entry in tracked where settings.pointerDPI != nil {
+            if let dpi = entry.defaultDPI { _ = try? entry.device.setSensorDPI(dpi) }
+        }
+        settings.pointerDPI = nil
+        scrollTap.apply(settings)
         buttonTap.settings = settings
         applyKeyRemaps()
         tracked.forEach { _ = configure($0) }
@@ -113,7 +123,10 @@ final class Daemon {
                 problem: entry.problem,
                 slots: entry.slots,
                 canForget: entry.canForget,
-                switchedTo: entry.switchedTo
+                switchedTo: entry.switchedTo,
+                dpi: entry.dpi,
+                dpiMin: entry.dpiList?.minimum,
+                dpiMax: entry.dpiList?.maximum
             )
         }
         AgentStatus(accessibility: AXIsProcessTrusted(), devices: devices, failure: failure).save()
@@ -242,6 +255,17 @@ final class Daemon {
         }
         if settings.wheelMode != .unchanged {
             attempt("wheel \(settings.wheelMode)") { try setWheelMode(device) }
+        }
+        if device.isMouse, device.has(HIDPP.Feature.adjustableDPI) {
+            if let (current, defaultDPI) = try? device.sensorDPI() {
+                entry.dpi = current
+                entry.defaultDPI = defaultDPI
+                Log.info("\(device.name): sensor at \(current) DPI (default \(defaultDPI))")
+            }
+            entry.dpiList = try? device.sensorDPIList()
+            if let wanted = settings.pointerDPI {
+                attempt("pointer \(wanted) DPI") { entry.dpi = try device.setSensorDPI(wanted) }
+            }
         }
         if device.isMouse {
             for button in Self.nativeButtons { // fails harmlessly for controls it doesn't have
