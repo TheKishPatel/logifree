@@ -88,3 +88,90 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(decoded.keyRemaps, [])
     }
 }
+
+final class AppProfileTests: XCTestCase {
+    private let figma = "com.figma.Desktop"
+
+    private func figmaSettings() -> Settings {
+        var settings = Settings()
+        settings.appProfiles = [AppProfile(bundleID: figma, name: "Figma", buttons: [
+            .back: .middleClick,
+            .forward: .keystroke(KeyCombo(key: 47, modifiers: 0x100000, display: "⌘.")),
+        ])]
+        return settings
+    }
+
+    func testProfileOverridesButtonsOnlyInItsApp() {
+        let settings = figmaSettings()
+        XCTAssertEqual(settings.buttonAction(.back, in: figma), .middleClick)
+        XCTAssertNil(settings.buttonAction(.back, in: "com.apple.Safari"))
+        XCTAssertNil(settings.buttonAction(.back, in: nil))
+        XCTAssertTrue(settings.mapsButtons)
+        XCTAssertFalse(Settings().mapsButtons)
+    }
+
+    func testUnmappedProfileButtonFallsBackToGlobal() {
+        var settings = figmaSettings()
+        settings.appProfiles[0].buttons[.forward] = nil
+        settings.buttons[.forward] = .missionControl
+        XCTAssertEqual(settings.buttonAction(.forward, in: figma), .missionControl)
+    }
+
+    func testProfileGesturesReplaceGlobalOnlyWhenSet() {
+        var settings = figmaSettings()
+        XCTAssertEqual(settings.gestures(in: figma), settings.gestures)
+        settings.appProfiles[0].gestures = [.click: .showDesktop]
+        XCTAssertEqual(settings.gestures(in: figma), [.click: .showDesktop])
+    }
+
+    func testRoundTripsAndOldFilesStillLoad() throws {
+        var settings = figmaSettings()
+        settings.wheelMode = .freeSpin
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data), settings)
+        let old = try JSONDecoder().decode(Settings.self, from: Data(#"{"invertWheel": false}"#.utf8))
+        XCTAssertEqual(old.wheelMode, .unchanged)
+        XCTAssertTrue(old.appProfiles.isEmpty)
+    }
+
+    func testEventButtonNumbers() {
+        XCTAssertEqual(MouseButton(eventButtonNumber: 3), .back)
+        XCTAssertEqual(MouseButton(eventButtonNumber: 4), .forward)
+        XCTAssertNil(MouseButton(eventButtonNumber: 2))
+    }
+}
+
+final class DPITests: XCTestCase {
+    // MX Master 3: 200–4000 in steps of 50 → 00C8 E032 0FA0 0000.
+    private let mxMaster3 = DPIList(bytes: [0x00, 0xC8, 0xE0, 0x32, 0x0F, 0xA0, 0x00, 0x00, 0x00, 0x00])
+
+    func testParsesSteppedRange() {
+        XCTAssertEqual(mxMaster3.minimum, 200)
+        XCTAssertEqual(mxMaster3.maximum, 4000)
+        XCTAssertEqual(mxMaster3.ranges.first?.step, 50)
+    }
+
+    func testSnapsToAcceptedValues() {
+        XCTAssertEqual(mxMaster3.nearest(to: 1112), 1100)
+        XCTAssertEqual(mxMaster3.nearest(to: 1130), 1150)
+        XCTAssertEqual(mxMaster3.nearest(to: 50), 200)
+        XCTAssertEqual(mxMaster3.nearest(to: 9000), 4000)
+    }
+
+    func testParsesPlainList() {
+        let list = DPIList(bytes: [0x01, 0x90, 0x03, 0x20, 0x06, 0x40, 0x00, 0x00])
+        XCTAssertEqual(list.values, [400, 800, 1600])
+        XCTAssertEqual(list.nearest(to: 1000), 800)
+    }
+
+    func testNewScrollAndPointerSettingsRoundTrip() throws {
+        var settings = Settings()
+        settings.pointerDPI = 1100
+        settings.smoothScrolling = true
+        settings.scrollSpeed = 0.6
+        settings.scrollSmoothness = 0.1
+        let decoded = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded, settings)
+        XCTAssertNil(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).pointerDPI)
+    }
+}

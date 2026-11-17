@@ -10,12 +10,14 @@ struct ContentView: View {
         Form {
             agentSection
             devicesSection
+            pointerSection
             scrollingSection
             gestureSection
+            buttonsSection
             advancedSection
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 760)
+        .frame(width: 540, height: 880)
         .alert(model.error?.title ?? "", isPresented: isPresent($model.error)) {} message: {
             Text(model.error?.detail ?? "")
         }
@@ -107,12 +109,57 @@ struct ContentView: View {
         Section {
             Toggle("Reverse scroll wheel", isOn: $model.settings.invertWheel)
             Toggle("Reverse thumb wheel", isOn: $model.settings.invertThumbwheel)
+            Toggle("Smooth scrolling", isOn: $model.settings.smoothScrolling)
+            if model.settings.smoothScrolling {
+                LabeledContent("Scroll speed") {
+                    HStack {
+                        Slider(value: $model.settings.scrollSpeed, in: 0.25...3) {} minimumValueLabel: {
+                            Text("Slow").font(.caption)
+                        } maximumValueLabel: {
+                            Text("Fast").font(.caption)
+                        }
+                        Text(model.settings.scrollSpeed.formatted(.number.precision(.fractionLength(2))) + "×")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                    .frame(width: 300)
+                }
+            }
+            if model.settings.smoothScrolling {
+                LabeledContent("Smoothness") {
+                    Slider(value: $model.settings.scrollSmoothness, in: 0...1) {} minimumValueLabel: {
+                        Text("Snappy").font(.caption)
+                    } maximumValueLabel: {
+                        Text("Floaty").font(.caption)
+                    }
+                    .frame(width: 300)
+                }
+            }
             Picker("Distance per click", selection: $model.settings.minimumLinesPerClick) {
                 Text("macOS default").tag(1)
                 Text("2 lines").tag(2)
                 Text("3 lines").tag(3)
             }
             .pickerStyle(.segmented)
+            Picker("Wheel mode", selection: $model.settings.wheelMode) {
+                Text("Leave as is").tag(WheelMode.unchanged)
+                Text("Ratchet").tag(WheelMode.ratchet)
+                Text("Free spin").tag(WheelMode.freeSpin)
+                Text("SmartShift").tag(WheelMode.smartShift)
+            }
+            if model.settings.wheelMode == .smartShift {
+                LabeledContent("SmartShift sensitivity") {
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.settings.smartShiftSensitivity) },
+                            set: { model.settings.smartShiftSensitivity = Int($0) }
+                        ),
+                        in: 1...100
+                    )
+                    .frame(width: 240)
+                }
+            }
         } header: {
             Text("Scrolling")
         } footer: {
@@ -143,6 +190,88 @@ struct ContentView: View {
         } footer: {
             Text("Click the thumb button, or hold it and move the mouse in a direction. On mice without one, such as the MX Anywhere, the middle button takes its place.")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Pointer
+
+    private var pointerSection: some View {
+        let mouse = model.agentStatus?.devices.first { $0.isMouse && $0.dpi != nil }
+        let range = Double(mouse?.dpiMin ?? 200)...Double(mouse?.dpiMax ?? 4000)
+        return Section {
+            Toggle("Set pointer speed", isOn: Binding(
+                get: { model.settings.pointerDPI != nil },
+                set: { model.settings.pointerDPI = $0 ? (mouse?.dpi ?? 1000) : nil }
+            ))
+            if let dpi = model.settings.pointerDPI {
+                LabeledContent("Sensor DPI") {
+                    HStack {
+                        Slider(
+                            value: Binding(get: { Double(dpi) },
+                                           set: { model.settings.pointerDPI = Int(($0 / 50).rounded()) * 50 }),
+                            in: range
+                        ) {} minimumValueLabel: {
+                            Text("Slow").font(.caption)
+                        } maximumValueLabel: {
+                            Text("Fast").font(.caption)
+                        }
+                        Text("\(dpi)").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    }
+                    .frame(width: 300)
+                }
+            }
+        } header: {
+            Text("Pointer")
+        } footer: {
+            Text(mouse.map { "\($0.name) is at \($0.dpi ?? 0) DPI. macOS's Tracking speed still applies on top." }
+                 ?? "Sets the mouse's own sensor speed. macOS's Tracking speed still applies on top.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Back and forward
+
+    private var buttonsSection: some View {
+        Section {
+            buttonRow("Everywhere", $model.settings.buttons)
+            ForEach($model.settings.appProfiles) { $profile in
+                HStack(alignment: .top) {
+                    buttonRow(profile.name, $profile.buttons)
+                    Button { model.settings.appProfiles.removeAll { $0.bundleID == profile.bundleID } } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove \(profile.name)'s settings")
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Add app…") { model.addAppProfile() }
+            }
+        } header: {
+            Text("Back and forward buttons")
+        } footer: {
+            Text("Per-app settings apply while that app is in front. \"Native\" keeps the button's own behaviour.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func buttonRow(_ label: String, _ buttons: Binding<[MouseButton: Action]>) -> some View {
+        LabeledContent(label) {
+            HStack(alignment: .top) {
+                ForEach(MouseButton.allCases, id: \.self) { button in
+                    VStack(spacing: 4) {
+                        Text(button == .back ? "Back" : "Forward").font(.caption).foregroundStyle(.secondary)
+                        ActionPicker(
+                            title: button.rawValue,
+                            action: Binding(get: { buttons.wrappedValue[button] },
+                                            set: { buttons.wrappedValue[button] = $0 }),
+                            noneTitle: "Native",
+                            width: 130
+                        )
+                    }
+                }
+            }
         }
     }
 

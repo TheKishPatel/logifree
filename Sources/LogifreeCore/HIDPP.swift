@@ -16,6 +16,9 @@ public enum HIDPP {
         public static let hostsInfo: UInt16 = 0x1815
         public static let reprogControls: UInt16 = 0x1B04
         public static let wirelessStatus: UInt16 = 0x1D4B
+        public static let adjustableDPI: UInt16 = 0x2201
+        public static let smartShift: UInt16 = 0x2110
+        public static let smartShiftEnhanced: UInt16 = 0x2111
         public static let hiresWheel: UInt16 = 0x2121
         public static let thumbwheel: UInt16 = 0x2150
     }

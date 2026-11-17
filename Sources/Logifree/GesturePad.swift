@@ -44,27 +44,7 @@ private struct GestureCell: View {
             Label(title, systemImage: symbol)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker(title, selection: Binding(
-                get: { ActionChoice(action) },
-                set: { if $0 != ActionChoice(action) { action = $0.action } }
-            )) {
-                ForEach(ActionChoice.allCases, id: \.self) { choice in
-                    Text(choice.title).tag(choice)
-                    if choice == .desktopRight { Divider() }
-                }
-            }
-            .labelsHidden()
-            .frame(width: 148)
-            if case .keystroke(let combo) = action {
-                ShortcutRecorder(combo: Binding(get: { combo }, set: { action = .keystroke($0) }))
-                    .frame(width: 148)
-            }
-            if case .shell(let command) = action {
-                TextField("open -a Notes", text: Binding(get: { command }, set: { action = .shell($0) }))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 148)
-            }
+            ActionPicker(title: title, action: $action)
         }
     }
 
@@ -89,7 +69,7 @@ private struct GestureCell: View {
     }
 }
 
-private enum ActionChoice: CaseIterable, Hashable {
+enum ActionChoice: CaseIterable, Hashable {
     case none, missionControl, appExpose, showDesktop, desktopLeft, desktopRight, middleClick, keystroke, shell
 
     init(_ action: Action?) {
@@ -131,6 +111,40 @@ private enum ActionChoice: CaseIterable, Hashable {
         case .middleClick: .middleClick
         case .keystroke: .keystroke(.unset)
         case .shell: .shell("")
+        }
+    }
+}
+
+/// Picks an action, with a shortcut recorder or command field when it needs one.
+struct ActionPicker: View {
+    let title: String
+    @Binding var action: Action?
+    var noneTitle = "Nothing"
+    var width: CGFloat = 148
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Picker(title, selection: Binding(
+                get: { ActionChoice(action) },
+                set: { if $0 != ActionChoice(action) { action = $0.action } }
+            )) {
+                ForEach(ActionChoice.allCases, id: \.self) { choice in
+                    Text(choice == .none ? noneTitle : choice.title).tag(choice)
+                    if choice == .desktopRight { Divider() }
+                }
+            }
+            .labelsHidden()
+            .frame(width: width)
+            if case .keystroke(let combo) = action {
+                ShortcutRecorder(combo: Binding(get: { combo }, set: { action = .keystroke($0) }))
+                    .frame(width: width)
+            }
+            if case .shell(let command) = action {
+                TextField("open -a Notes", text: Binding(get: { command }, set: { action = .shell($0) }))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: width)
+            }
         }
     }
 }

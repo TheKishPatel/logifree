@@ -136,6 +136,19 @@ final class AppModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: save)
     }
 
+    /// Asks for an app and adds an empty profile for it.
+    func addAppProfile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bundleID = Bundle(url: url)?.bundleIdentifier,
+              settings.profile(for: bundleID) == nil else { return }
+        var name = FileManager.default.displayName(atPath: url.path)
+        if name.hasSuffix(".app") { name.removeLast(4) }
+        settings.appProfiles.append(AppProfile(bundleID: bundleID, name: name))
+    }
+
     // MARK: Devices
 
     private func agentStatusChanged() {
