@@ -88,3 +88,55 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(decoded.keyRemaps, [])
     }
 }
+
+final class AppProfileTests: XCTestCase {
+    private let figma = "com.figma.Desktop"
+
+    private func figmaSettings() -> Settings {
+        var settings = Settings()
+        settings.appProfiles = [AppProfile(bundleID: figma, name: "Figma", buttons: [
+            .back: .middleClick,
+            .forward: .keystroke(KeyCombo(key: 47, modifiers: 0x100000, display: "⌘.")),
+        ])]
+        return settings
+    }
+
+    func testProfileOverridesButtonsOnlyInItsApp() {
+        let settings = figmaSettings()
+        XCTAssertEqual(settings.buttonAction(.back, in: figma), .middleClick)
+        XCTAssertNil(settings.buttonAction(.back, in: "com.apple.Safari"))
+        XCTAssertNil(settings.buttonAction(.back, in: nil))
+        XCTAssertTrue(settings.mapsButtons)
+        XCTAssertFalse(Settings().mapsButtons)
+    }
+
+    func testUnmappedProfileButtonFallsBackToGlobal() {
+        var settings = figmaSettings()
+        settings.appProfiles[0].buttons[.forward] = nil
+        settings.buttons[.forward] = .missionControl
+        XCTAssertEqual(settings.buttonAction(.forward, in: figma), .missionControl)
+    }
+
+    func testProfileGesturesReplaceGlobalOnlyWhenSet() {
+        var settings = figmaSettings()
+        XCTAssertEqual(settings.gestures(in: figma), settings.gestures)
+        settings.appProfiles[0].gestures = [.click: .showDesktop]
+        XCTAssertEqual(settings.gestures(in: figma), [.click: .showDesktop])
+    }
+
+    func testRoundTripsAndOldFilesStillLoad() throws {
+        var settings = figmaSettings()
+        settings.wheelMode = .freeSpin
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data), settings)
+        let old = try JSONDecoder().decode(Settings.self, from: Data(#"{"invertWheel": false}"#.utf8))
+        XCTAssertEqual(old.wheelMode, .unchanged)
+        XCTAssertTrue(old.appProfiles.isEmpty)
+    }
+
+    func testEventButtonNumbers() {
+        XCTAssertEqual(MouseButton(eventButtonNumber: 3), .back)
+        XCTAssertEqual(MouseButton(eventButtonNumber: 4), .forward)
+        XCTAssertNil(MouseButton(eventButtonNumber: 2))
+    }
+}

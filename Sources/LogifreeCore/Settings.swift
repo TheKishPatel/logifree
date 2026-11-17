@@ -41,6 +41,46 @@ public enum Action: Codable, Hashable {
     case shell(String)
 }
 
+/// Mouse buttons that macOS sees natively (buttons 4 and 5) and Logifree can remap.
+public enum MouseButton: String, Codable, CaseIterable, CodingKeyRepresentable {
+    case back, forward
+
+    /// `CGEvent` `.mouseEventButtonNumber` (0 = left, 1 = right, 2 = middle).
+    public var eventButtonNumber: Int64 { self == .back ? 3 : 4 }
+
+    public init?(eventButtonNumber: Int64) {
+        switch eventButtonNumber {
+        case 3: self = .back
+        case 4: self = .forward
+        default: return nil
+        }
+    }
+}
+
+/// Settings that replace the global ones while an app is frontmost.
+public struct AppProfile: Codable, Equatable, Identifiable {
+    public var id: String { bundleID }
+    public var bundleID: String
+    public var name: String
+    /// Overrides per button; buttons left out use the global mapping.
+    public var buttons: [MouseButton: Action]
+    /// Replaces all gesture mappings when set; nil uses the global ones.
+    public var gestures: [ThumbGesture: Action]?
+
+    public init(bundleID: String, name: String, buttons: [MouseButton: Action] = [:],
+                gestures: [ThumbGesture: Action]? = nil) {
+        self.bundleID = bundleID
+        self.name = name
+        self.buttons = buttons
+        self.gestures = gestures
+    }
+}
+
+/// How the scroll wheel's ratchet behaves (HID++ SmartShift).
+public enum WheelMode: String, Codable, CaseIterable {
+    case unchanged, ratchet, freeSpin, smartShift
+}
+
 /// Lives in `~/Library/Application Support/logifree/settings.json`. The app writes
 /// it and posts `reloadNotification`; the agent re-reads and re-applies.
 public struct Settings: Codable, Equatable {
@@ -59,8 +99,37 @@ public struct Settings: Codable, Equatable {
     public var minimumLinesPerClick = 2
     /// System-wide key → key remaps for every keyboard.
     public var keyRemaps: [KeyRemap] = []
+    /// What the back and forward buttons do everywhere. Unmapped buttons stay native.
+    public var buttons: [MouseButton: Action] = [:]
+    /// Per-app overrides, applied while that app is frontmost.
+    public var appProfiles: [AppProfile] = []
+    /// Scroll wheel ratchet behaviour; `.unchanged` leaves the mouse's own setting.
+    public var wheelMode: WheelMode = .unchanged
+    /// SmartShift threshold, 1 (shifts to free spin easily) … 100 (barely).
+    public var smartShiftSensitivity = 50
 
     public init() {}
+
+    /// The profile for an app, if there is one.
+    public func profile(for bundleID: String?) -> AppProfile? {
+        guard let bundleID else { return nil }
+        return appProfiles.first { $0.bundleID == bundleID }
+    }
+
+    /// Back/forward mapping in effect for an app: its profile first, then the global one.
+    public func buttonAction(_ button: MouseButton, in bundleID: String?) -> Action? {
+        profile(for: bundleID)?.buttons[button] ?? buttons[button]
+    }
+
+    /// Gesture mapping in effect for an app: its profile's gestures, if it has any, else global.
+    public func gestures(in bundleID: String?) -> [ThumbGesture: Action] {
+        profile(for: bundleID)?.gestures ?? gestures
+    }
+
+    /// Whether any back/forward mapping exists, so the button tap is needed.
+    public var mapsButtons: Bool {
+        !buttons.isEmpty || appProfiles.contains { !$0.buttons.isEmpty }
+    }
 
     // Missing keys fall back to defaults, so adding a setting never breaks an old file.
     public init(from decoder: Decoder) throws {
@@ -73,6 +142,11 @@ public struct Settings: Codable, Equatable {
         minimumLinesPerClick = try container.decodeIfPresent(Int.self, forKey: .minimumLinesPerClick)
             ?? defaults.minimumLinesPerClick
         keyRemaps = try container.decodeIfPresent([KeyRemap].self, forKey: .keyRemaps) ?? defaults.keyRemaps
+        buttons = try container.decodeIfPresent([MouseButton: Action].self, forKey: .buttons) ?? defaults.buttons
+        appProfiles = try container.decodeIfPresent([AppProfile].self, forKey: .appProfiles) ?? defaults.appProfiles
+        wheelMode = try container.decodeIfPresent(WheelMode.self, forKey: .wheelMode) ?? defaults.wheelMode
+        smartShiftSensitivity = try container.decodeIfPresent(Int.self, forKey: .smartShiftSensitivity)
+            ?? defaults.smartShiftSensitivity
     }
 
     public static let directory = FileManager.default.homeDirectoryForCurrentUser

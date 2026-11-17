@@ -12,10 +12,11 @@ struct ContentView: View {
             devicesSection
             scrollingSection
             gestureSection
+            buttonsSection
             advancedSection
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 760)
+        .frame(width: 540, height: 820)
         .alert(model.error?.title ?? "", isPresented: isPresent($model.error)) {} message: {
             Text(model.error?.detail ?? "")
         }
@@ -113,6 +114,24 @@ struct ContentView: View {
                 Text("3 lines").tag(3)
             }
             .pickerStyle(.segmented)
+            Picker("Wheel mode", selection: $model.settings.wheelMode) {
+                Text("Leave as is").tag(WheelMode.unchanged)
+                Text("Ratchet").tag(WheelMode.ratchet)
+                Text("Free spin").tag(WheelMode.freeSpin)
+                Text("SmartShift").tag(WheelMode.smartShift)
+            }
+            if model.settings.wheelMode == .smartShift {
+                LabeledContent("SmartShift sensitivity") {
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.settings.smartShiftSensitivity) },
+                            set: { model.settings.smartShiftSensitivity = Int($0) }
+                        ),
+                        in: 1...100
+                    )
+                    .frame(width: 240)
+                }
+            }
         } header: {
             Text("Scrolling")
         } footer: {
@@ -143,6 +162,52 @@ struct ContentView: View {
         } footer: {
             Text("Click the thumb button, or hold it and move the mouse in a direction. On mice without one, such as the MX Anywhere, the middle button takes its place.")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Back and forward
+
+    private var buttonsSection: some View {
+        Section {
+            buttonRow("Everywhere", $model.settings.buttons)
+            ForEach($model.settings.appProfiles) { $profile in
+                HStack(alignment: .top) {
+                    buttonRow(profile.name, $profile.buttons)
+                    Button { model.settings.appProfiles.removeAll { $0.bundleID == profile.bundleID } } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove \(profile.name)'s settings")
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Add app…") { model.addAppProfile() }
+            }
+        } header: {
+            Text("Back and forward buttons")
+        } footer: {
+            Text("Per-app settings apply while that app is in front. \"Native\" keeps the button's own behaviour.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func buttonRow(_ label: String, _ buttons: Binding<[MouseButton: Action]>) -> some View {
+        LabeledContent(label) {
+            HStack(alignment: .top) {
+                ForEach(MouseButton.allCases, id: \.self) { button in
+                    VStack(spacing: 4) {
+                        Text(button == .back ? "Back" : "Forward").font(.caption).foregroundStyle(.secondary)
+                        ActionPicker(
+                            title: button.rawValue,
+                            action: Binding(get: { buttons.wrappedValue[button] },
+                                            set: { buttons.wrappedValue[button] = $0 }),
+                            noneTitle: "Native",
+                            width: 130
+                        )
+                    }
+                }
+            }
         }
     }
 

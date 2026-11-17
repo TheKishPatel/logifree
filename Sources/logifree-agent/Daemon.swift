@@ -26,6 +26,8 @@ final class Daemon {
 
     private let monitor = HIDMonitor()
     private let scrollTap = ScrollTap()
+    private let frontmost = FrontmostApp()
+    private lazy var buttonTap = ButtonTap(frontmost: frontmost)
     private var remapsApplied = false
     private var tracked: [Tracked] = []
     private var settings = Settings.load()
@@ -33,6 +35,9 @@ final class Daemon {
 
     private static let thumbButton: [UInt8] = [0x00, 0xC3]
     private static let middleButton: [UInt8] = [0x00, 0x52]
+    /// Back and forward. Left native (Logifree remaps them from their macOS events),
+    /// but undiverted on connect in case other software, e.g. Logi Options+, left them diverted.
+    private static let nativeButtons: [[UInt8]] = [[0x00, 0x53], [0x00, 0x56]]
 
     func run() -> Never {
         Log.info("logifree agent started")
@@ -41,6 +46,7 @@ final class Daemon {
             Log.info("no Accessibility permission yet: gesture actions can't send shortcuts until it's granted")
         }
         scrollTap.minimumLines = settings.minimumLinesPerClick
+        buttonTap.settings = settings
         applyKeyRemaps()
         Settings.observeReload { [unowned self] in reload() }
         AgentStatus.observeQuit { [unowned self] in quit() }
@@ -63,8 +69,10 @@ final class Daemon {
         let old = settings
         settings = Settings.load()
         scrollTap.minimumLines = settings.minimumLinesPerClick // also retries the tap once Accessibility is granted
+        buttonTap.settings = settings
         if settings.keyRemaps != old.keyRemaps { applyKeyRemaps() }
         if settings.invertWheel != old.invertWheel || settings.invertThumbwheel != old.invertThumbwheel
+            || settings.wheelMode != old.wheelMode || settings.smartShiftSensitivity != old.smartShiftSensitivity
             || divertsGesture(settings) != divertsGesture(old) {
             Log.info("settings changed: reconfiguring devices")
             tracked.forEach { scheduleConfigure($0, after: 0) }
@@ -74,7 +82,8 @@ final class Daemon {
 
     /// Whether any gesture does something, so the button needs diverting.
     private func divertsGesture(_ settings: Settings) -> Bool {
-        settings.gestures.values.contains { $0 != .keystroke(.unset) && $0 != .shell("") }
+        let all = [settings.gestures] + settings.appProfiles.compactMap(\.gestures)
+        return all.contains { $0.values.contains { $0 != .keystroke(.unset) && $0 != .shell("") } }
     }
 
     /// Puts devices back to how they'd be without Logifree, then exits cleanly so
@@ -84,8 +93,12 @@ final class Daemon {
         settings.invertWheel = false
         settings.invertThumbwheel = false
         settings.gestures = [:]
+        settings.appProfiles = []
+        settings.buttons = [:]
+        settings.wheelMode = .unchanged
         settings.keyRemaps = []
         scrollTap.minimumLines = 1
+        buttonTap.settings = settings
         applyKeyRemaps()
         tracked.forEach { _ = configure($0) }
         exit(0)
@@ -179,7 +192,7 @@ final class Daemon {
         } else if !pressed && entry.gestureHeld {
             entry.gestureHeld = false
             let gesture = ThumbGesture.classify(dx: entry.gestureDX, dy: entry.gestureDY, threshold: settings.swipeThreshold)
-            settings.gestures[gesture]?.perform()
+            settings.gestures(in: frontmost.bundleID)[gesture]?.perform()
         }
     }
 
@@ -227,6 +240,14 @@ final class Daemon {
                 try device.call(HIDPP.Feature.thumbwheel, 2, [0, settings.invertThumbwheel ? 1 : 0])
             }
         }
+        if settings.wheelMode != .unchanged {
+            attempt("wheel \(settings.wheelMode)") { try setWheelMode(device) }
+        }
+        if device.isMouse {
+            for button in Self.nativeButtons { // fails harmlessly for controls it doesn't have
+                _ = try? device.call(HIDPP.Feature.reprogControls, 3, button + [0x02])
+            }
+        }
         // getCidReporting fails for a control the mouse doesn't have.
         entry.gestureButton = !device.isMouse ? nil : [Self.thumbButton, Self.middleButton].first { button in
             (try? device.call(HIDPP.Feature.reprogControls, 2, button)) != nil
@@ -252,6 +273,24 @@ final class Daemon {
         let summary = (applied + problems).joined(separator: ", ")
         Log.info("\(device.name) (\(device.kindName), \(device.route)): \(summary.isEmpty ? "nothing to do" : summary)")
         return true
+    }
+
+    /// SmartShift: [wheel mode (1 free spin, 2 ratchet), auto-disengage threshold
+    /// (0 = keep, 0xFF = never), default threshold (0 = keep)].
+    private func setWheelMode(_ device: Device) throws {
+        let threshold = UInt8(max(1, min(50, (100 - settings.smartShiftSensitivity) / 2)))
+        let params: [UInt8] = switch settings.wheelMode {
+        case .unchanged: []
+        case .freeSpin: [1, 0, 0]
+        case .ratchet: [2, 0xFF, 0]
+        case .smartShift: [2, threshold, 0]
+        }
+        guard !params.isEmpty else { return }
+        if device.has(HIDPP.Feature.smartShiftEnhanced) {
+            try device.call(HIDPP.Feature.smartShiftEnhanced, 2, params)
+        } else {
+            try device.call(HIDPP.Feature.smartShift, 1, params) // throws .unsupported without it
+        }
     }
 
     // MARK: Easy-Switch
