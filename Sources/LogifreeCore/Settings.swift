@@ -49,11 +49,8 @@ public enum MouseButton: String, Codable, CaseIterable, CodingKeyRepresentable {
     public var eventButtonNumber: Int64 { self == .back ? 3 : 4 }
 
     public init?(eventButtonNumber: Int64) {
-        switch eventButtonNumber {
-        case 3: self = .back
-        case 4: self = .forward
-        default: return nil
-        }
+        guard let button = Self.allCases.first(where: { $0.eventButtonNumber == eventButtonNumber }) else { return nil }
+        self = button
     }
 }
 

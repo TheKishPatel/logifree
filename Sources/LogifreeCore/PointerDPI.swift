@@ -58,10 +58,10 @@ extension Device {
         DPIList(bytes: Array(try call(HIDPP.Feature.adjustableDPI, 1, [0]).dropFirst()))
     }
 
-    /// Sets the nearest DPI the sensor accepts; returns what was set.
+    /// Sets the nearest DPI in `list` (from `sensorDPIList()`); returns what was set.
     @discardableResult
-    public func setSensorDPI(_ wanted: Int) throws -> Int {
-        let dpi = (try? sensorDPIList().nearest(to: wanted)) ?? wanted
+    public func setSensorDPI(_ wanted: Int, list: DPIList?) throws -> Int {
+        let dpi = list?.nearest(to: wanted) ?? wanted
         try call(HIDPP.Feature.adjustableDPI, 3, [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)])
         return dpi
     }

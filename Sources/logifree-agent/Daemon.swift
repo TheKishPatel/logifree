@@ -74,9 +74,14 @@ final class Daemon {
         scrollTap.apply(settings) // also retries the tap once Accessibility is granted
         buttonTap.settings = settings
         if settings.keyRemaps != old.keyRemaps { applyKeyRemaps() }
+        let ready = tracked.filter(\.configured)
+        if settings.pointerDPI != old.pointerDPI {
+            ready.forEach { applyDPI($0, restoreDefault: old.pointerDPI != nil) }
+        }
+        if settings.wheelMode != old.wheelMode || settings.smartShiftSensitivity != old.smartShiftSensitivity {
+            ready.forEach { applyWheelMode($0.device, restoreDefault: old.wheelMode != .unchanged) }
+        }
         if settings.invertWheel != old.invertWheel || settings.invertThumbwheel != old.invertThumbwheel
-            || settings.wheelMode != old.wheelMode || settings.smartShiftSensitivity != old.smartShiftSensitivity
-            || settings.pointerDPI != old.pointerDPI
             || divertsGesture(settings) != divertsGesture(old) {
             Log.info("settings changed: reconfiguring devices")
             tracked.forEach { scheduleConfigure($0, after: 0) }
@@ -94,19 +99,23 @@ final class Daemon {
     /// launchd leaves it stopped until the next login (or the app starts it).
     private func quit() {
         Log.info("quitting: restoring devices")
+        let ready = tracked.filter(\.configured)
+        if settings.pointerDPI != nil {
+            settings.pointerDPI = nil
+            ready.forEach { applyDPI($0, restoreDefault: true) }
+        }
+        if settings.wheelMode != .unchanged {
+            settings.wheelMode = .unchanged
+            ready.forEach { applyWheelMode($0.device, restoreDefault: true) }
+        }
         settings.invertWheel = false
         settings.invertThumbwheel = false
         settings.gestures = [:]
         settings.appProfiles = []
         settings.buttons = [:]
-        settings.wheelMode = .unchanged
         settings.keyRemaps = []
         settings.smoothScrolling = false
         settings.minimumLinesPerClick = 1
-        for entry in tracked where settings.pointerDPI != nil {
-            if let dpi = entry.defaultDPI { _ = try? entry.device.setSensorDPI(dpi) }
-        }
-        settings.pointerDPI = nil
         scrollTap.apply(settings)
         buttonTap.settings = settings
         applyKeyRemaps()
@@ -264,7 +273,7 @@ final class Daemon {
             }
             entry.dpiList = try? device.sensorDPIList()
             if let wanted = settings.pointerDPI {
-                attempt("pointer \(wanted) DPI") { entry.dpi = try device.setSensorDPI(wanted) }
+                attempt("pointer \(wanted) DPI") { entry.dpi = try device.setSensorDPI(wanted, list: entry.dpiList) }
             }
         }
         if device.isMouse {
@@ -297,6 +306,39 @@ final class Daemon {
         let summary = (applied + problems).joined(separator: ", ")
         Log.info("\(device.name) (\(device.kindName), \(device.route)): \(summary.isEmpty ? "nothing to do" : summary)")
         return true
+    }
+
+    /// Sets the wanted DPI, or with none, optionally puts back the sensor's default.
+    private func applyDPI(_ entry: Tracked, restoreDefault: Bool) {
+        let target = settings.pointerDPI ?? (restoreDefault ? entry.defaultDPI : nil)
+        guard let target, entry.device.isMouse, entry.dpiList != nil || entry.defaultDPI != nil else { return }
+        do {
+            entry.dpi = try entry.device.setSensorDPI(target, list: entry.dpiList)
+            Log.info("\(entry.device.name): pointer \(entry.dpi ?? target) DPI")
+        } catch {
+            Log.info("\(entry.device.name): couldn't set \(target) DPI: \(error)")
+        }
+    }
+
+    /// Sets the wanted wheel mode, or with `.unchanged`, optionally puts back the
+    /// factory behaviour: ratchet, shifting to free spin at the default threshold.
+    private func applyWheelMode(_ device: Device, restoreDefault: Bool) {
+        guard settings.wheelMode != .unchanged || restoreDefault else { return }
+        do {
+            if settings.wheelMode != .unchanged {
+                try setWheelMode(device)
+            } else if device.has(HIDPP.Feature.smartShiftEnhanced) {
+                let defaultThreshold = try device.call(HIDPP.Feature.smartShiftEnhanced, 0)[1] // getCapabilities
+                try device.call(HIDPP.Feature.smartShiftEnhanced, 2, [2, defaultThreshold, 0])
+            } else {
+                let defaultThreshold = try device.call(HIDPP.Feature.smartShift, 0)[2] // getRatchetControlMode
+                try device.call(HIDPP.Feature.smartShift, 1, [2, defaultThreshold, 0])
+            }
+            Log.info("\(device.name): wheel \(settings.wheelMode == .unchanged ? "restored" : "\(settings.wheelMode)")")
+        } catch HIDPPError.unsupported {
+        } catch {
+            Log.info("\(device.name): couldn't set the wheel mode: \(error)")
+        }
     }
 
     /// SmartShift: [wheel mode (1 free spin, 2 ratchet), auto-disengage threshold

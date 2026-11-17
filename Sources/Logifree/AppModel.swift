@@ -144,7 +144,8 @@ final class AppModel {
         guard panel.runModal() == .OK, let url = panel.url,
               let bundleID = Bundle(url: url)?.bundleIdentifier,
               settings.profile(for: bundleID) == nil else { return }
-        let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        var name = FileManager.default.displayName(atPath: url.path)
+        if name.hasSuffix(".app") { name.removeLast(4) }
         settings.appProfiles.append(AppProfile(bundleID: bundleID, name: name))
     }
 

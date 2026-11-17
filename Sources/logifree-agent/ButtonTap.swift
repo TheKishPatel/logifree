@@ -7,8 +7,6 @@ import LogifreeCore
 final class FrontmostApp {
     private let lock = NSLock()
     private var current: String?
-    /// Called on main after the frontmost app changes.
-    var onChange: ((String?) -> Void)?
 
     init() {
         current = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -26,27 +24,28 @@ final class FrontmostApp {
     }
 
     private func set(_ bundleID: String?) {
-        lock.lock()
-        let changed = current != bundleID
-        current = bundleID
-        lock.unlock()
-        if changed {
-            Log.debug("frontmost: \(bundleID ?? "none")")
-            onChange?(bundleID)
-        }
+        lock.lock(); current = bundleID; lock.unlock()
+        Log.debug("frontmost: \(bundleID ?? "none")")
     }
 }
 
 /// Remaps the back and forward buttons (macOS buttons 4 and 5), globally or per
-/// frontmost app. It edits macOS's own mouse events: "Middle click" rewrites the
-/// button number in place, so holding and dragging works (e.g. panning in Figma);
-/// other actions swallow the button and run on press. Unmapped buttons pass
-/// untouched, and with nothing mapped there's no tap at all.
+/// frontmost app. "Middle click" swallows the button and posts a real middle
+/// button down/up at the HID level, so the system's pressed-button state says
+/// "middle" too and hold-and-drag works (e.g. panning in Figma); drags in between
+/// are relabelled as middle drags. Other actions swallow the button and run on
+/// press. Unmapped buttons pass untouched, and with nothing mapped there's no tap.
 ///
-/// Like `ScrollTap`, the tap runs on its own thread so it never waits on device I/O.
+/// Like `ScrollTap`, the tap runs on its own thread so it never waits on device I/O,
+/// and actions run on their own queue rather than behind it on main.
 final class ButtonTap {
+    /// Tags the events we post.
+    private static let marker: Int64 = 0x4C_4F_47_42 // "LOGB"
+    private static let actions = DispatchQueue(label: "button actions", qos: .userInteractive)
+
     private var tap: CFMachPort?
     private let frontmost: FrontmostApp
+    private let source = CGEventSource(stateID: .hidSystemState)
     private let lock = NSLock()
     private var _settings = Settings()
     /// The action chosen when each button went down, kept until it comes up so an
@@ -69,6 +68,17 @@ final class ButtonTap {
         let wanted = settings.mapsButtons
         if wanted, tap == nil { create() }
         if let tap { CGEvent.tapEnable(tap: tap, enable: wanted) }
+        // With the tap off, a held button's release would arrive unmapped: let go now.
+        if !wanted { releaseHeld() }
+    }
+
+    private func releaseHeld() {
+        lock.lock()
+        let middles = held.filter { $0.value == .middleClick }.count
+        held = [:]
+        lock.unlock()
+        guard middles > 0, let location = CGEvent(source: nil)?.location else { return }
+        postMiddle(.otherMouseUp, at: location, flags: [], clickState: 1)
     }
 
     private func create() {
@@ -103,31 +113,49 @@ final class ButtonTap {
             if let tap { CGEvent.tapEnable(tap: tap, enable: settings.mapsButtons) }
             return pass
         }
-        guard let button = MouseButton(eventButtonNumber: event.getIntegerValueField(.mouseEventButtonNumber))
+        guard event.getIntegerValueField(.eventSourceUserData) != Self.marker,
+              let button = MouseButton(eventButtonNumber: event.getIntegerValueField(.mouseEventButtonNumber))
         else { return pass }
 
-        let action: Action
+        lock.lock()
+        let action: Action?
         switch type {
         case .otherMouseDown:
-            guard let mapped = settings.buttonAction(button, in: frontmost.bundleID) else { return pass }
-            held[button] = mapped
-            action = mapped
-            if mapped != .middleClick {
-                Log.debug("\(button) → \(mapped)")
-                DispatchQueue.main.async { mapped.perform() }
-            }
-        case .otherMouseDragged:
-            guard let mapped = held[button] else { return pass }
-            action = mapped
+            action = _settings.buttonAction(button, in: frontmost.bundleID)
+            held[button] = action
         case .otherMouseUp:
-            guard let mapped = held.removeValue(forKey: button) else { return pass }
-            action = mapped
+            action = held.removeValue(forKey: button)
         default:
+            action = held[button]
+        }
+        lock.unlock()
+        guard let action else { return pass }
+
+        guard action == .middleClick else {
+            if type == .otherMouseDown {
+                Log.debug("\(button) → \(action)")
+                Self.actions.async { action.perform() }
+            }
+            return nil // swallowed: the action runs on press
+        }
+        switch type {
+        case .otherMouseDown, .otherMouseUp:
+            postMiddle(type, at: event.location, flags: event.flags,
+                       clickState: event.getIntegerValueField(.mouseEventClickState))
+            return nil
+        default: // drag while held: relabel it as a middle drag
+            event.setIntegerValueField(.mouseEventButtonNumber, value: 2)
             return pass
         }
+    }
 
-        guard action == .middleClick else { return nil } // swallowed: the action already ran
-        event.setIntegerValueField(.mouseEventButtonNumber, value: 2)
-        return pass
+    /// A middle button event posted at the HID level, so the system tracks it as pressed.
+    private func postMiddle(_ type: CGEventType, at location: CGPoint, flags: CGEventFlags, clickState: Int64) {
+        guard let event = CGEvent(mouseEventSource: source, mouseType: type,
+                                  mouseCursorPosition: location, mouseButton: .center) else { return }
+        event.setIntegerValueField(.eventSourceUserData, value: Self.marker)
+        event.setIntegerValueField(.mouseEventClickState, value: max(1, clickState))
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
     }
 }
