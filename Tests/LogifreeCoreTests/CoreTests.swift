@@ -169,6 +169,7 @@ final class DPITests: XCTestCase {
         settings.pointerDPI = 1100
         settings.smoothScrolling = true
         settings.scrollSpeed = 0.6
+        settings.scrollSmoothness = 0.1
         let decoded = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings))
         XCTAssertEqual(decoded, settings)
         XCTAssertNil(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).pointerDPI)

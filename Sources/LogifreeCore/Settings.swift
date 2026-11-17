@@ -113,6 +113,8 @@ public struct Settings: Codable, Equatable {
     public var smoothScrolling = false
     /// Multiplies the distance of smooth scrolling (1 = about what macOS scrolls natively).
     public var scrollSpeed = 1.0
+    /// How long each smooth scroll glides: 0 = snappy (~40 ms) … 1 = floaty (~300 ms).
+    public var scrollSmoothness = 0.3
 
     public init() {}
 
@@ -156,6 +158,8 @@ public struct Settings: Codable, Equatable {
         pointerDPI = try container.decodeIfPresent(Int.self, forKey: .pointerDPI)
         smoothScrolling = try container.decodeIfPresent(Bool.self, forKey: .smoothScrolling) ?? defaults.smoothScrolling
         scrollSpeed = try container.decodeIfPresent(Double.self, forKey: .scrollSpeed) ?? defaults.scrollSpeed
+        scrollSmoothness = try container.decodeIfPresent(Double.self, forKey: .scrollSmoothness)
+            ?? defaults.scrollSmoothness
     }
 
     public static let directory = FileManager.default.homeDirectoryForCurrentUser

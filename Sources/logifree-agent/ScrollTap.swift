@@ -20,6 +20,8 @@ final class ScrollTap {
         var minimumLines = 1
         var smooth = false
         var speed = 1.0
+        /// Fraction of the remaining distance scrolled per 120 Hz frame.
+        var easing = 0.3
         var active: Bool { minimumLines > 1 || smooth }
     }
 
@@ -27,8 +29,6 @@ final class ScrollTap {
     private static let marker: Int64 = 0x4C_4F_47_49 // "LOGI"
     /// What browsers and most apps scroll per wheel line.
     private static let pixelsPerLine = 40.0
-    /// Fraction of the remaining distance scrolled per frame (120 Hz): ~150 ms to settle.
-    private static let easing = 0.15
 
     private var tap: CFMachPort?
     private let lock = NSLock()
@@ -48,7 +48,9 @@ final class ScrollTap {
     func apply(_ settings: Settings) {
         lock.lock()
         _config = Config(minimumLines: settings.minimumLinesPerClick, smooth: settings.smoothScrolling,
-                         speed: max(0.1, settings.scrollSpeed))
+                         speed: max(0.1, settings.scrollSpeed),
+                         // smoothness 0 → 0.5 (settles in ~40 ms), 1 → 0.08 (~300 ms)
+                         easing: 0.5 - 0.42 * min(max(settings.scrollSmoothness, 0), 1))
         let active = _config.active
         lock.unlock()
         if active, tap == nil { create() }
@@ -137,7 +139,7 @@ final class ScrollTap {
     }
 
     private func step() {
-        var delta = remaining * Self.easing
+        var delta = remaining * config.easing
         if abs(remaining) < 2 { delta = remaining }
         remaining -= delta
         carry += delta

@@ -126,6 +126,16 @@ struct ContentView: View {
                     .frame(width: 300)
                 }
             }
+            if model.settings.smoothScrolling {
+                LabeledContent("Smoothness") {
+                    Slider(value: $model.settings.scrollSmoothness, in: 0...1) {} minimumValueLabel: {
+                        Text("Snappy").font(.caption)
+                    } maximumValueLabel: {
+                        Text("Floaty").font(.caption)
+                    }
+                    .frame(width: 300)
+                }
+            }
             Picker("Distance per click", selection: $model.settings.minimumLinesPerClick) {
                 Text("macOS default").tag(1)
                 Text("2 lines").tag(2)
