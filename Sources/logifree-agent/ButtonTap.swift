@@ -30,11 +30,12 @@ final class FrontmostApp {
 }
 
 /// Remaps the back and forward buttons (macOS buttons 4 and 5), globally or per
-/// frontmost app. "Middle click" swallows the button and posts a real middle
+/// frontmost app, after swapping them if asked. "Middle click" swallows the button and posts a real middle
 /// button down/up at the HID level, so the system's pressed-button state says
 /// "middle" too and hold-and-drag works (e.g. panning in Figma); drags in between
 /// are relabelled as middle drags. Other actions swallow the button and run on
-/// press. Unmapped buttons pass untouched, and with nothing mapped there's no tap.
+/// press. Unmapped buttons pass through, relabelled if swapped, and with nothing
+/// mapped or swapped there's no tap.
 ///
 /// Like `ScrollTap`, the tap runs on its own thread so it never waits on device I/O,
 /// and actions run on their own queue rather than behind it on main.
@@ -48,9 +49,10 @@ final class ButtonTap {
     private let source = CGEventSource(stateID: .hidSystemState)
     private let lock = NSLock()
     private var _settings = Settings()
-    /// The action chosen when each button went down, kept until it comes up so an
-    /// app switch mid-press can't leave a button stuck.
-    private var held: [MouseButton: Action] = [:]
+    /// What each physical button became when it went down (after any swap) and the
+    /// action chosen for it, kept until it comes up so an app switch or settings
+    /// change mid-press can't leave a button stuck or split across two buttons.
+    private var held: [MouseButton: (button: MouseButton, action: Action?)] = [:]
 
     init(frontmost: FrontmostApp) {
         self.frontmost = frontmost
@@ -65,7 +67,7 @@ final class ButtonTap {
     }
 
     private func update() {
-        let wanted = settings.mapsButtons
+        let wanted = settings.needsButtonTap
         if wanted, tap == nil { create() }
         if let tap { CGEvent.tapEnable(tap: tap, enable: wanted) }
         // With the tap off, a held button's release would arrive unmapped: let go now.
@@ -74,7 +76,7 @@ final class ButtonTap {
 
     private func releaseHeld() {
         lock.lock()
-        let middles = held.filter { $0.value == .middleClick }.count
+        let middles = held.filter { $0.value.action == .middleClick }.count
         held = [:]
         lock.unlock()
         guard middles > 0, let location = CGEvent(source: nil)?.location else { return }
@@ -110,26 +112,33 @@ final class ButtonTap {
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: settings.mapsButtons) }
+            if let tap { CGEvent.tapEnable(tap: tap, enable: settings.needsButtonTap) }
             return pass
         }
         guard event.getIntegerValueField(.eventSourceUserData) != Self.marker,
-              let button = MouseButton(eventButtonNumber: event.getIntegerValueField(.mouseEventButtonNumber))
+              let physical = MouseButton(eventButtonNumber: event.getIntegerValueField(.mouseEventButtonNumber))
         else { return pass }
 
         lock.lock()
-        let action: Action?
+        let press: (button: MouseButton, action: Action?)
+        if type == .otherMouseDown {
+            let button = _settings.logicalButton(physical)
+            press = (button, _settings.buttonAction(button, in: frontmost.bundleID))
+        } else {
+            // Pressed before the tap was on: no action ran on press, so none on release.
+            press = held[physical] ?? (_settings.logicalButton(physical), nil)
+        }
         switch type {
-        case .otherMouseDown:
-            action = _settings.buttonAction(button, in: frontmost.bundleID)
-            held[button] = action
-        case .otherMouseUp:
-            action = held.removeValue(forKey: button)
-        default:
-            action = held[button]
+        case .otherMouseDown: held[physical] = press
+        case .otherMouseUp: held[physical] = nil
+        default: break
         }
         lock.unlock()
-        guard let action else { return pass }
+        let button = press.button
+        guard let action = press.action else {
+            if button != physical { event.setIntegerValueField(.mouseEventButtonNumber, value: button.eventButtonNumber) }
+            return pass
+        }
 
         guard action == .middleClick else {
             if type == .otherMouseDown {

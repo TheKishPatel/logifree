@@ -48,6 +48,9 @@ public enum MouseButton: String, Codable, CaseIterable, CodingKeyRepresentable {
     /// `CGEvent` `.mouseEventButtonNumber` (0 = left, 1 = right, 2 = middle).
     public var eventButtonNumber: Int64 { self == .back ? 3 : 4 }
 
+    /// The other one of the pair.
+    public var other: MouseButton { self == .back ? .forward : .back }
+
     public init?(eventButtonNumber: Int64) {
         guard let button = Self.allCases.first(where: { $0.eventButtonNumber == eventButtonNumber }) else { return nil }
         self = button
@@ -96,6 +99,9 @@ public struct Settings: Codable, Equatable {
     public var minimumLinesPerClick = 2
     /// System-wide key → key remaps for every keyboard.
     public var keyRemaps: [KeyRemap] = []
+    /// Swaps the back and forward buttons before anything else sees them, so the
+    /// mappings below (and native back/forward) follow the swapped buttons.
+    public var swapBackForward = false
     /// What the back and forward buttons do everywhere. Unmapped buttons stay native.
     public var buttons: [MouseButton: Action] = [:]
     /// Per-app overrides, applied while that app is frontmost.
@@ -131,9 +137,14 @@ public struct Settings: Codable, Equatable {
         profile(for: bundleID)?.gestures ?? gestures
     }
 
-    /// Whether any back/forward mapping exists, so the button tap is needed.
-    public var mapsButtons: Bool {
-        !buttons.isEmpty || appProfiles.contains { !$0.buttons.isEmpty }
+    /// Which button a physical press counts as, after any swap.
+    public func logicalButton(_ physical: MouseButton) -> MouseButton {
+        swapBackForward ? physical.other : physical
+    }
+
+    /// Whether the buttons are swapped or any back/forward mapping exists, so the button tap is needed.
+    public var needsButtonTap: Bool {
+        swapBackForward || !buttons.isEmpty || appProfiles.contains { !$0.buttons.isEmpty }
     }
 
     // Missing keys fall back to defaults, so adding a setting never breaks an old file.
@@ -147,6 +158,8 @@ public struct Settings: Codable, Equatable {
         minimumLinesPerClick = try container.decodeIfPresent(Int.self, forKey: .minimumLinesPerClick)
             ?? defaults.minimumLinesPerClick
         keyRemaps = try container.decodeIfPresent([KeyRemap].self, forKey: .keyRemaps) ?? defaults.keyRemaps
+        swapBackForward = try container.decodeIfPresent(Bool.self, forKey: .swapBackForward)
+            ?? defaults.swapBackForward
         buttons = try container.decodeIfPresent([MouseButton: Action].self, forKey: .buttons) ?? defaults.buttons
         appProfiles = try container.decodeIfPresent([AppProfile].self, forKey: .appProfiles) ?? defaults.appProfiles
         wheelMode = try container.decodeIfPresent(WheelMode.self, forKey: .wheelMode) ?? defaults.wheelMode
