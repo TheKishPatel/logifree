@@ -106,8 +106,8 @@ final class AppProfileTests: XCTestCase {
         XCTAssertEqual(settings.buttonAction(.back, in: figma), .middleClick)
         XCTAssertNil(settings.buttonAction(.back, in: "com.apple.Safari"))
         XCTAssertNil(settings.buttonAction(.back, in: nil))
-        XCTAssertTrue(settings.mapsButtons)
-        XCTAssertFalse(Settings().mapsButtons)
+        XCTAssertTrue(settings.needsButtonTap)
+        XCTAssertFalse(Settings().needsButtonTap)
     }
 
     func testUnmappedProfileButtonFallsBackToGlobal() {
@@ -138,6 +138,17 @@ final class AppProfileTests: XCTestCase {
         XCTAssertEqual(MouseButton(eventButtonNumber: 3), .back)
         XCTAssertEqual(MouseButton(eventButtonNumber: 4), .forward)
         XCTAssertNil(MouseButton(eventButtonNumber: 2))
+    }
+
+    func testSwapNeedsTheTapAndSwapsButtons() throws {
+        var settings = Settings()
+        XCTAssertEqual(settings.logicalButton(.back), .back)
+        settings.swapBackForward = true
+        XCTAssertTrue(settings.needsButtonTap)
+        XCTAssertEqual(settings.logicalButton(.back), .forward)
+        XCTAssertEqual(settings.logicalButton(.forward), .back)
+        XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings)), settings)
+        XCTAssertFalse(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)).swapBackForward)
     }
 }
 

@@ -233,6 +233,8 @@ struct ContentView: View {
 
     private var buttonsSection: some View {
         Section {
+            Toggle("Swap back and forward", isOn: $model.settings.swapBackForward)
+                .help("Makes the front thumb button go back and the rear one go forward, in every app. The settings below follow the swap.")
             buttonRow("Everywhere", $model.settings.buttons)
             ForEach($model.settings.appProfiles) { $profile in
                 HStack(alignment: .top) {
